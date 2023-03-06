@@ -952,7 +952,9 @@ constexpr auto n() noexcept {
 
   if constexpr (custom_name.empty() && nameof_member_supported<decltype(V)>::value) {
 #if defined(__clang__) || defined(__GNUC__)
-    constexpr auto name = pretty_name({__PRETTY_FUNCTION__, sizeof(__PRETTY_FUNCTION__) - 2});
+    // on GCC when V is a static member pointer, the PRETTY_FUNCTION macro wraps the name with parenthesis
+    constexpr bool rm_ptr = __PRETTY_FUNCTION__[sizeof(__PRETTY_FUNCTION__) - 3] == ')';
+    constexpr auto name = pretty_name({__PRETTY_FUNCTION__, sizeof(__PRETTY_FUNCTION__) - 2 - rm_ptr});
 #elif defined(_MSC_VER) && defined(_MSVC_LANG) && _MSVC_LANG >= 202002L
     constexpr auto name = pretty_name({__FUNCSIG__, sizeof(__FUNCSIG__) - 17});
 #else
@@ -983,18 +985,24 @@ struct union_type_holder {
   constexpr static union_type<T> value;
 };
 
+template <auto V, bool = sizeof(decltype(get_base_type(V))) != 0>
+std::true_type has_defined_base(int);
+
+template <auto V>
+std::false_type has_defined_base(float);
+
 template <auto V>
 constexpr auto get_member_name() noexcept {
-  if constexpr (std::is_member_function_pointer_v<decltype(V)>) {
-    return n<V>();
-  } else {
-    constexpr bool is_defined = sizeof(decltype(get_base_type(V))) != 0;
+  if constexpr (std::is_member_object_pointer_v<decltype(V)>) {
+    constexpr bool is_defined = decltype(has_defined_base<V>(0))::value;
     static_assert(is_defined, "Member name can use only if the struct is already fully defined. Please use NAMEOF macro, or separate definition and declaration.");
     if constexpr (is_defined) {
         return n<V, &(union_type_holder<decltype(get_base_type(V))>::value.f.*V)>();
     } else {
-        return "";
+        return n<V>();
     }
+  } else {
+    return n<V>();
   }
 }
 
@@ -1134,9 +1142,18 @@ template <typename T>
 // Obtains name of member.
 template <auto V>
 [[nodiscard]] constexpr auto nameof_member() noexcept -> std::enable_if_t<std::is_member_pointer_v<decltype(V)>, string_view> {
-  static_assert(detail::nameof_member_supported<decltype(V)>::value, "nameof::nameof_memder unsupported compiler (https://github.com/Neargye/nameof#compiler-compatibility).");
+  static_assert(detail::nameof_member_supported<decltype(V)>::value, "nameof::nameof_member unsupported compiler (https://github.com/Neargye/nameof#compiler-compatibility).");
   constexpr string_view name = detail::member_name_v<V>;
   static_assert(!name.empty(), "Member does not have a name.");
+
+  return name;
+}
+
+template <auto V>
+[[nodiscard]] constexpr auto nameof_member() noexcept -> std::enable_if_t<std::is_pointer_v<decltype(V)>, string_view> {
+  static_assert(detail::nameof_member_supported<decltype(V)>::value, "nameof::nameof_member unsupported compiler (https://github.com/Neargye/nameof#compiler-compatibility).");
+  constexpr string_view name = detail::member_name_v<V>;
+  static_assert(!name.empty(), "Pointer is not a member, or member does not have a name.");
 
   return name;
 }
